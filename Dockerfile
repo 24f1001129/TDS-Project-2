@@ -1,7 +1,6 @@
 FROM python:3.11-slim
 WORKDIR /app
-
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 \
     libnspr4 \
     libdbus-1-3 \
@@ -16,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libgbm1 \
     libxkbcommon0 \
+    libasound2t64 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
