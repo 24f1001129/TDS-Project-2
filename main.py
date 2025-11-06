@@ -2,6 +2,7 @@ import os
 import asyncio
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
+from playwright.async_api import async_playwright
 
 app = FastAPI()
 SECRET_KEY = os.environ.get("SECRET_KEY")
@@ -14,16 +15,38 @@ class QuizRequest(BaseModel):
 async def solve_quiz_task(url: str, email: str, secret: str):
     """
     This is our asynchronous worker.
-    It runs in the background, independent of the API response.
-    In future phases, this is where all the "agent" logic will go.
+    It now uses Playwright to scrape the target URL.
     """
+    
     print("--------------------------------------------------")
     print(f"[WORKER] 🤖 Task accepted for URL: {url}")
-    print(f"[WORKER] ⏳ Simulating 10 seconds of hard work...")
-    await asyncio.sleep(10) 
     
-    print(f"[WORKER] ✅ Finished processing task for {url}")
-    print("--------------------------------------------------")
+    try:
+        async with async_playwright() as p:
+            print("[WORKER]  launching browser...")
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            
+            print(f"[WORKER]  navigating to {url}...")
+            await page.goto(url)
+            await asyncio.sleep(2) 
+            
+            print("[WORKER] 📸 Scraping page content...")
+            content = await page.content()
+            
+            print("[WORKER] ✅ Successfully scraped page.")
+            print("\n--- Start of Scraped Content (first 1000 chars) ---")
+            print(content[:1000])
+            print("--- End of Scraped Content ---")
+            
+            await browser.close()
+
+    except Exception as e:
+        print(f"[WORKER] ❌ FAILED to process task for {url}")
+        print(f"[WORKER] Error: {e}")
+    
+    finally:
+        print("--------------------------------------------------")
 
 @app.get("/")
 def read_root():
@@ -35,12 +58,6 @@ def read_health():
 
 @app.post("/quiz")
 async def handle_quiz_request(request: QuizRequest, background_tasks: BackgroundTasks):
-    """
-    This endpoint now does two things:
-    1. Validates the secret.
-    2. Immediately returns a 200 OK response.
-    3. Adds the *actual* work to a background task queue.
-    """
     
     if not SECRET_KEY:
         raise HTTPException(
@@ -60,5 +77,5 @@ async def handle_quiz_request(request: QuizRequest, background_tasks: Background
         email=request.email, 
         secret=request.secret
     )
-
+    
     return {"status": "Job accepted and processing in background."}
