@@ -12,75 +12,107 @@ llm_client = AsyncOpenAI(
 )
 
 SYSTEM_PROMPT = """
-You are a highly intelligent data analysis agent.
-Your goal is to understand and solve a data quiz.
-You will be given TWO pieces of information:
-1.  A "Task Data" JSON object: This contains the URL to visit, but
-    also *CRITICAL METADATA*. It may include session IDs, task IDs,
-    or API keys that are *required* to solve the task.
-2.  The "Page HTML" from that URL.
+You are a 'headless' AI agent that controls a web browser.
+You will be given the HTML of a webpage and a task.
+Your goal is to solve the task.
 
-Analyze BOTH pieces of information and, in plain English, state:
-1.  What is the task or question?
-2.  Are there any hints (like API keys) in the "Task Data" JSON?
-3.  What are the steps to solve it?
-4.  What is the final submission URL?
+You have a toolkit of functions. For each step, you MUST respond with a
+single JSON object describing the tool you want to use.
+
+Your available tools are:
+1. {"tool": "click", "selector": "<css_selector>"}
+   - Use this to click on buttons, links, or other elements.
+   - Example: {"tool": "click", "selector": "button#submit-button"}
+
+2. {"tool": "fill_text", "selector": "<css_selector>", "text": "<text_to_fill>"}
+   - Use this to type into text fields.
+   - Example: {"tool": "fill_text", "selector": "input[name='email']", "text": "user@example.com"}
+
+3. {"tool": "task_complete", "summary": "<summary_of_your_findings>"}
+   - Use this *only* when the task is fully solved (e.g., you have the answer).
+   - The summary will be printed to the logs.
+
+Based on the HTML, decide the *single next step* to solve the task.
+The task data is:
 """
 
 async def solve_quiz_task(task_data: dict):
+    
     url = task_data.get("url")
-    
-    print("--------------------------------------------------")
-    print(f"[WORKER] 🤖 Task accepted for URL: {url}")
-    print(f"[WORKER]  Full task data: {task_data}")
-    
     if not url:
-        print("[WORKER] ❌ FAILED: No 'url' field in task_data.")
+        print("[AGENT] ❌ FAILED: No 'url' field in task_data.")
         return
+
+    print("--------------------------------------------------")
+    print(f"[AGENT] 🤖 New task accepted for URL: {url}")
+    print(f"[AGENT]  Full task data: {task_data}")
 
     try:
         async with async_playwright() as p:
-            print("[WORKER]  Launching browser...")
             browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
             page = await browser.new_page(user_agent=USER_AGENT)
             
-            print(f"[WORKER]  Navigating to {url}...")
+            print(f"[AGENT]  Navigating to {url}...")
             await page.goto(url)
-            await page.wait_for_load_state("networkidle", timeout=5000)
             
-            print("[WORKER] 📸 Scraping page content...")
-            scraped_html = await page.content()
-            await browser.close()
-            
-            print(f"[WORKER] ✅ Successfully scraped page ({len(scraped_html)} bytes).")
-
-        print("[WORKER] 🧠 Connecting to LLM to understand the task...")
-
-        user_content = f"""
-        --- Task Data (JSON) ---
-        {json.dumps(task_data, indent=2)}
-
-        --- Page HTML ---
-        {scraped_html}
-        """
-        
-        response = await llm_client.chat.completions.create(
-            model="gpt-4o", # MODEL
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_content}
+            message_history = [
+                {
+                    "role": "system",
+                    "content": f"{SYSTEM_PROMPT}\n{json.dumps(task_data, indent=2)}"
+                }
             ]
-        )
-        
-        llm_response = response.choices[0].message.content
-        
-        print("[WORKER] ✅ LLM analysis complete.")
-        print("\n--- LLM Response ---")
-        print(llm_response)
+
+            for i in range(10):
+                print(f"\n[AGENT] --- Loop {i+1} / 10 ---")
+                
+                print("[AGENT]  👀 Seeing (Scraping page)...")
+                html_content = await page.content()
+                
+                message_history.append({"role": "user", "content": html_content})
+
+                print("[AGENT]  🧠 Thinking (Calling LLM)...")
+                response = await llm_client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=message_history,
+                    response_format={"type": "json_object"}
+                )
+                
+                llm_response_text = response.choices[0].message.content
+                print(f"[AGENT]  LLM response: {llm_response_text}")
+                
+                message_history.append({"role": "assistant", "content": llm_response_text})
+
+                try:
+                    action_json = json.loads(llm_response_text)
+                    
+                    if action_json["tool"] == "click":
+                        print(f"[AGENT]  Executing click({action_json['selector']})...")
+                        # TODO: Implement this tool
+                    
+                    elif action_json["tool"] == "fill_text":
+                        print(f"[AGENT]  Executing fill_text({action_json['selector']})...")
+                        # TODO: Implement this tool
+                    
+                    elif action_json["tool"] == "task_complete":
+                        print("[AGENT] ✅ Task Complete!")
+                        print(f"[AGENT]  Final summary: {action_json['summary']}")
+                        break
+                    
+                    else:
+                        print(f"[AGENT] ⚠️ Unknown tool: {action_json['tool']}")
+
+                    await asyncio.sleep(2)
+
+                except Exception as e:
+                    print(f"[AGENT] ❌ Error parsing or executing LLM action: {e}")
+                    break
+            
+            await browser.close()
+            print("[AGENT]  Browser closed.")
 
     except Exception as e:
-        print(f"[WORKER] ❌ FAILED to process task for {url}")
-        print(f"[WORKER] Error: {e}")
+        print(f"[AGENT] ❌ FAILED to process task for {url}")
+        print(f"[AGENT] Error: {e}")
     
     finally:
         print("--------------------------------------------------")
