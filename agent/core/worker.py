@@ -55,8 +55,7 @@ async def decide_specialist(task_data, html_snippet):
     try:
         response = await llm_client.chat.completions.create(
             model="openai/gpt-5-image-mini", 
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0
+            messages=[{"role": "user", "content": prompt}]
         )
         choice = response.choices[0].message.content.strip().upper()
         
