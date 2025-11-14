@@ -85,10 +85,11 @@ async def solve_quiz_task(task_data: dict):
             page = await browser.new_page(user_agent=USER_AGENT)
             
             print(f"[AGENT]  Navigating to {url}...")
-            await page.goto(url)
-            await page.wait_for_load_state("networkidle", timeout=5000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=10000)
+            await asyncio.sleep(2) 
             
             html_content = await page.content()
+            print("[AGENT]  Page content scraped.")
             specialist = await decide_specialist(task_data, html_content)
             
             print(f"[ROUTER]  Decision: Routing to {specialist}_AGENT.")
