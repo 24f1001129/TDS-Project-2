@@ -110,7 +110,6 @@ async def run_agent_loop(agent_name: str, model_name: str, system_prompt: str,
     
     for i in range(10):
         print(f"\n[{agent_name}] --- Loop {i+1} / 10 ---")
-
         print(f"[{agent_name}]  🧠 Thinking (Calling {model_name})...")
         try:
             response = await llm_client.chat.completions.create(
@@ -125,9 +124,12 @@ async def run_agent_loop(agent_name: str, model_name: str, system_prompt: str,
             print(f"[{agent_name}] ❌ LLM call failed: {e}")
             message_history.append({"role": "user", "content": f"LLM Error: {e}. Please try again."})
             continue
-
         try:
-            action_json = json.loads(llm_response_text)
+            try:
+                action_json = json.loads(llm_response_text)
+            except json.JSONDecodeError:
+                raise ValueError(f"LLM returned invalid JSON: {llm_response_text}")
+
             tool = action_json.get("tool")
             result = f"Error: Unknown tool '{tool}'."
 
@@ -147,7 +149,8 @@ async def run_agent_loop(agent_name: str, model_name: str, system_prompt: str,
                 result = await tool_submit_answer(action_json.get("submission_url"), action_json.get("answer_json"))
                 print(f"[{agent_name}] ✅ Task Complete!")
                 return result
-
+            else:
+                result = f"Error: LLM returned an unknown tool: '{tool}'."
             print(f"[{agent_name}]  Tool output: {result[:500]}...")
             await page.wait_for_load_state("networkidle", timeout=3000)
             new_html = await page.content()
@@ -173,8 +176,7 @@ async def decide_specialist(task_data, raw_html: str):
     try:
         response = await llm_client.chat.completions.create(
             model="openai/gpt-5-image-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0
+            messages=[{"role": "user", "content": prompt}]
         )
         choice = response.choices[0].message.content.strip().upper()
         print(f"[ROUTER]  LLM choice: {choice}")
@@ -210,7 +212,7 @@ async def solve_quiz_task(task_data: dict):
             
             if specialist == "CODE":
                 result = await run_agent_loop(
-                    "CODE_AGENT", "openai/gpt-5-pro",
+                    "CODE_AGENT", "openai/gpt-5-pro", 
                     CODE_AGENT_PROMPT, page, task_data, html_content
                 )
             elif specialist == "PRO":
