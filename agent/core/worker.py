@@ -79,7 +79,7 @@ async def solve_quiz_task(task_data: dict):
             message_history = []
 
             for i in range(3):
-                print(f"\n[AGENT] --- Loop {i+1} / 15 ---")
+                print(f"\n[AGENT] --- Loop {i+1} / 3 ---")
                 
                 print("[AGENT]  👀 Seeing (Scraping page)...")
                 html_content = await page.content()
