@@ -6,7 +6,7 @@ from agent.core.worker import solve_quiz_task
 
 router = APIRouter()
 SECRET_KEY = os.environ.get("SECRET_KEY")
-TASK_TIMEOUT = 170.0
+TASK_TIMEOUT = 180.0  # 3 minutes as per requirements
 
 @router.get("/")
 def read_root():
@@ -21,9 +21,7 @@ def read_health():
 async def handle_quiz_request(request: QuizRequest, background_tasks: BackgroundTasks):
     
     if not SECRET_KEY:
-        if not os.environ.get("SECRET_KEY"):
-             raise HTTPException(status_code=500, detail="Server SECRET_KEY not configured.")
-        SECRET_KEY = os.environ.get("SECRET_KEY")
+        raise HTTPException(status_code=500, detail="Server SECRET_KEY not configured.")
         
     if request.secret != SECRET_KEY:
         raise HTTPException(status_code=403, detail="Invalid secret.")

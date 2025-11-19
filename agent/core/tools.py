@@ -7,6 +7,8 @@ import numpy as np
 import traceback
 import base64
 import os
+import json
+from typing import Any, Tuple
 from playwright.async_api import Page
 from openai import AsyncOpenAI
 
@@ -134,7 +136,123 @@ async def tool_take_screenshot_and_analyze(page: Page, analysis_prompt: str):
         print(f"[TOOL]  ❌ Vision analysis failed: {e}")
         return f"Error during vision analysis: {str(e)}"
 
+def validate_answer_format(answer: Any) -> Tuple[bool, str]:
+    """
+    Validates that the answer is in one of the allowed formats:
+    - boolean
+    - number (int or float)
+    - string
+    - base64 URI (data:...;base64,...)
+    - JSON object (dict) with combination of above
+    
+    Returns (is_valid, error_message)
+    """
+    if answer is None:
+        return False, "Answer cannot be None"
+    
+    # Check for basic types
+    if isinstance(answer, (bool, int, float, str)):
+        return True, ""
+    
+    # Check for base64 URI
+    if isinstance(answer, str) and answer.startswith("data:") and ";base64," in answer:
+        return True, ""
+    
+    # Check for JSON object (dict)
+    if isinstance(answer, dict):
+        # Recursively validate all values in the dict
+        for key, value in answer.items():
+            is_valid, error = validate_answer_format(value)
+            if not is_valid:
+                return False, f"Invalid value for key '{key}': {error}"
+        return True, ""
+    
+    # Check for list (which can be serialized as JSON)
+    if isinstance(answer, list):
+        for i, item in enumerate(answer):
+            is_valid, error = validate_answer_format(item)
+            if not is_valid:
+                return False, f"Invalid item at index {i}: {error}"
+        return True, ""
+    
+    return False, f"Answer must be boolean, number, string, base64 URI, or JSON object. Got {type(answer).__name__}"
+
+def check_payload_size(payload: dict) -> Tuple[bool, str, int]:
+    """
+    Checks if the JSON payload is under 1MB.
+    Returns (is_valid, error_message, size_in_bytes)
+    """
+    try:
+        json_str = json.dumps(payload)
+        size_bytes = len(json_str.encode('utf-8'))
+        max_size = 1024 * 1024  # 1MB
+        
+        if size_bytes > max_size:
+            return False, f"Payload size ({size_bytes} bytes) exceeds 1MB limit ({max_size} bytes)", size_bytes
+        return True, "", size_bytes
+    except Exception as e:
+        return False, f"Error checking payload size: {e}", 0
+
 async def tool_submit_answer(submission_url: str, answer_json: dict):
-    """The FINAL tool. Logs the answer and submission URL."""
+    """The FINAL tool. Submits the answer via HTTP POST and returns the response."""
     print(f"[TOOL] 📤 SUBMIT: {answer_json} to {submission_url}")
-    return f"Task completed. Final answer logged: {answer_json}"
+    
+    # Validate answer format
+    answer = answer_json.get("answer")
+    if answer is not None:
+        is_valid, error_msg = validate_answer_format(answer)
+        if not is_valid:
+            error = f"Invalid answer format: {error_msg}"
+            print(f"[TOOL] ❌ {error}")
+            return {
+                "correct": False,
+                "reason": error,
+                "url": None
+            }
+    
+    # Check payload size
+    is_size_ok, size_error, size_bytes = check_payload_size(answer_json)
+    if not is_size_ok:
+        print(f"[TOOL] ❌ {size_error}")
+        return {
+            "correct": False,
+            "reason": size_error,
+            "url": None
+        }
+    print(f"[TOOL] ✓ Payload size: {size_bytes} bytes (under 1MB limit)")
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                submission_url,
+                json=answer_json,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                    print(f"[TOOL] ✅ Submission successful. Response: {result}")
+                    return result
+                except Exception as e:
+                    return {
+                        "correct": False,
+                        "reason": f"Failed to parse response JSON: {e}",
+                        "url": None
+                    }
+            else:
+                error_msg = f"Submission failed with status {response.status_code}: {response.text[:500]}"
+                print(f"[TOOL] ❌ {error_msg}")
+                return {
+                    "correct": False,
+                    "reason": error_msg,
+                    "url": None
+                }
+    except Exception as e:
+        error_msg = f"Error submitting answer: {str(e)}"
+        print(f"[TOOL] ❌ {error_msg}")
+        return {
+            "correct": False,
+            "reason": error_msg,
+            "url": None
+        }
