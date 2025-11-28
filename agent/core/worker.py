@@ -153,7 +153,7 @@ async def extract_rendered_quiz_content(page: Page) -> str:
         print(f"[EXTRACT] Error extracting rendered content: {e}, falling back to HTML")
         return await page.content()
 
-async def run_single_task_loop(page: Page, task_hint: str):
+async def run_single_task_loop(page: Page, task_hint: str, task_url: str):
     """
     This is the "Inner Loop" (Solver).
     It runs a "See-Think-Act" loop to solve a *single* task URL.
@@ -176,7 +176,13 @@ async def run_single_task_loop(page: Page, task_hint: str):
             await asyncio.sleep(0.5)
             page_content = await page.content()
         
+        # Extract submission URL from page content to help the LLM
+        detected_submission_url = extract_submission_url(page_content)
+        
         formatted_prompt = SYSTEM_PROMPT.format(task_hint=task_hint, html_content=page_content)
+        
+        if detected_submission_url:
+            formatted_prompt += f"\n\n**HINT:** I found a likely submission URL on the page: {detected_submission_url}\nPlease use this URL for the 'submission_url' field in the submit_answer tool."
         
         if not message_history:
             message_history.append({"role": "system", "content": "You must respond with a single valid JSON tool command."})
@@ -235,7 +241,7 @@ async def run_single_task_loop(page: Page, task_hint: str):
                 submission_payload = {
                     "email": os.environ.get("STUDENT_EMAIL", "default@email.com"),
                     "secret": os.environ.get("SECRET_KEY"),
-                    "url": page.url,
+                    "url": task_url, # Use the original task URL, not current page.url
                     "answer": action_json.get("answer_json", {}).get("answer")
                 }
                 result = await tool_submit_answer(
@@ -289,7 +295,7 @@ async def solve_quiz_task(task_data: dict):
                     task_hint = quiz_content[:500] if quiz_content else "Solve the task on the page."
                     print(f"[SUPERVISOR] Extracted task hint from quiz page ({len(task_hint)} chars)")
 
-                submission_response = await run_single_task_loop(page, task_hint)
+                submission_response = await run_single_task_loop(page, task_hint, current_url)
                 
                 print(f"[SUPERVISOR]  Submission response: {submission_response}")
                 
