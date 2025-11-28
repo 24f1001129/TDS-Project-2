@@ -53,7 +53,9 @@ You MUST respond with a single valid JSON object describing the *one* tool you w
 2.  **Data Sourcing:**
     {{"tool": "call_api", "url": "<api_url>", "headers": {{}} }}
     {{"tool": "read_file", "url": "<file_url>"}}
-       (Use this for PDFs, CSVs, or text files found on the page)
+       (Use this for PDFs, CSVs, or text files found on the page. 
+       Files will be saved to a local 'downloads/' directory. 
+       The tool will return the path and a preview.)
 
 3.  **Data Analysis (Code):**
     {{"tool": "run_python_code", "code": "<python_code_snippet>"}}
@@ -200,7 +202,16 @@ async def run_single_task_loop(page: Page, task_hint: str):
 
         try:
             try:
-                action_json = json.loads(llm_response_text)
+                # Clean up markdown code blocks if present
+                cleaned_json = llm_response_text.strip()
+                if cleaned_json.startswith("```json"):
+                    cleaned_json = cleaned_json[7:]
+                if cleaned_json.startswith("```"):
+                    cleaned_json = cleaned_json[3:]
+                if cleaned_json.endswith("```"):
+                    cleaned_json = cleaned_json[:-3]
+                
+                action_json = json.loads(cleaned_json)
             except json.JSONDecodeError:
                 raise ValueError(f"LLM returned invalid JSON: {llm_response_text}")
 
@@ -214,7 +225,7 @@ async def run_single_task_loop(page: Page, task_hint: str):
             elif tool == "call_api":
                 result = await tool_call_api(action_json.get("url"), action_json.get("headers"))
             elif tool == "read_file":
-                result = await tool_read_file(action_json.get("url"))
+                result = await tool_read_file(action_json.get("url"), base_url=page.url)
             elif tool == "run_python_code":
                 result = await tool_run_python_code(action_json.get("code"))
             elif tool == "take_screenshot_and_analyze":
@@ -229,7 +240,8 @@ async def run_single_task_loop(page: Page, task_hint: str):
                 }
                 result = await tool_submit_answer(
                     action_json.get("submission_url"), 
-                    submission_payload
+                    submission_payload,
+                    base_url=page.url
                 )
                 print(f"[SOLVER] ✅ Task submission complete.")
                 return result

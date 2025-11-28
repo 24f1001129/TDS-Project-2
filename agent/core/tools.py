@@ -8,6 +8,7 @@ import traceback
 import base64
 import os
 import json
+import hashlib
 from typing import Any, Tuple
 from playwright.async_api import Page
 from openai import AsyncOpenAI
@@ -64,8 +65,15 @@ async def tool_call_api(url: str, headers: dict = None):
     except Exception as e:
         return f"Error calling API: {str(e)}"
 
-async def tool_read_file(url: str):
-    """Downloads a file (PDF, CSV, text) and extracts its content."""
+async def tool_read_file(url: str, base_url: str = None):
+    """Downloads a file (PDF, CSV, text) and extracts its content or saves it for processing."""
+    from urllib.parse import urljoin, urlparse
+    import os
+    
+    if base_url and not url.startswith(("http://", "https://")):
+        url = urljoin(base_url, url)
+        print(f"[TOOL] 🔗 Resolved relative URL to: {url}")
+
     print(f"[TOOL] 📂 Downloading file: {url}")
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -74,6 +82,28 @@ async def tool_read_file(url: str):
                 return f"Error: Failed to download. Status: {response.status_code}"
             
             content_type = response.headers.get("content-type", "").lower()
+            
+            # Create downloads directory if it doesn't exist
+            os.makedirs("downloads", exist_ok=True)
+            
+            # Extract filename from URL or use default
+            parsed_url = urlparse(url)
+            original_filename = os.path.basename(parsed_url.path)
+            if not original_filename:
+                original_filename = "downloaded_file"
+            
+            # Use hash of URL to ensure uniqueness and avoid collisions
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+            name, ext = os.path.splitext(original_filename)
+            if not ext:
+                ext = ".txt" # Default extension
+            
+            safe_filename = f"{name}_{url_hash}{ext}"
+            local_path = os.path.join("downloads", safe_filename)
+            
+            # Save the file
+            with open(local_path, "wb") as f:
+                f.write(response.content)
             
             if "pdf" in content_type or url.endswith(".pdf"):
                 print("[TOOL]  Processing PDF...")
@@ -84,8 +114,10 @@ async def tool_read_file(url: str):
                     return text
             
             elif "csv" in content_type or url.endswith(".csv"):
-                print("[TOOL]  Processing CSV...")
-                return response.text
+                print(f"[TOOL]  Saved CSV to {local_path}")
+                # Return preview only
+                preview = response.text[:1000]
+                return f"File saved to '{local_path}'. You can read it using pandas.\nPreview:\n{preview}..."
             
             else:
                 return response.text[:10000]
@@ -99,6 +131,11 @@ async def tool_run_python_code(code: str):
     The code can import any library installed in the environment.
     """
     print(f"[TOOL] 🐍 RUN PYTHON: \n{code}")
+    
+    # Safety check: prevent package installation
+    if "pip install" in code or "!pip" in code:
+        return "Error: Package installation is not allowed. Please use only pre-installed libraries (pandas, numpy, etc.)."
+        
     isolated_globals = {"__builtins__": __builtins__}
     
     code_out = io.StringIO()
@@ -215,8 +252,14 @@ def check_payload_size(payload: dict) -> Tuple[bool, str, int]:
     except Exception as e:
         return False, f"Error checking payload size: {e}", 0
 
-async def tool_submit_answer(submission_url: str, answer_json: dict):
+async def tool_submit_answer(submission_url: str, answer_json: dict, base_url: str = None):
     """The FINAL tool. Submits the answer via HTTP POST and returns the response."""
+    from urllib.parse import urljoin
+    
+    if base_url and not submission_url.startswith(("http://", "https://")):
+        submission_url = urljoin(base_url, submission_url)
+        print(f"[TOOL] 🔗 Resolved relative submission URL to: {submission_url}")
+
     print(f"[TOOL] 📤 SUBMIT: {answer_json} to {submission_url}")
     
     # Validate answer format
