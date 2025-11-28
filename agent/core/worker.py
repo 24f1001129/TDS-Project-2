@@ -190,11 +190,13 @@ async def run_single_task_loop(page: Page, task_hint: str, task_url: str):
         else:
             message_history.append({"role": "user", "content": f"New Page Content:\n{page_content}"})
 
-        print(f"[SOLVER]  🧠 Thinking (Calling Gemini 2.5 Pro)...")
+
         try:
             llm_client = get_llm_client()
+            model_name = os.environ.get("LLM_MODEL", "google/gemini-2.5-pro")
+            print(f"[SOLVER]  🧠 Thinking (Calling {model_name})...")
             response = await llm_client.chat.completions.create(
-                model=os.environ.get("LLM_MODEL", "google/gemini-2.5-pro"),
+                model=model_name,
                 messages=message_history,
                 response_format={"type": "json_object"}
             )
@@ -210,12 +212,13 @@ async def run_single_task_loop(page: Page, task_hint: str, task_url: str):
             try:
                 # Clean up markdown code blocks if present
                 cleaned_json = llm_response_text.strip()
-                if cleaned_json.startswith("```json"):
-                    cleaned_json = cleaned_json[7:]
-                if cleaned_json.startswith("```"):
-                    cleaned_json = cleaned_json[3:]
-                if cleaned_json.endswith("```"):
-                    cleaned_json = cleaned_json[:-3]
+                
+                # Try to find JSON object boundaries
+                start_idx = cleaned_json.find('{')
+                end_idx = cleaned_json.rfind('}')
+                
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    cleaned_json = cleaned_json[start_idx:end_idx+1]
                 
                 action_json = json.loads(cleaned_json)
             except json.JSONDecodeError:

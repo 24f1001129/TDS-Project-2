@@ -166,12 +166,13 @@ async def tool_take_screenshot_and_analyze(page: Page, analysis_prompt: str):
     screenshot_bytes = await page.screenshot()
     screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
     
-    print(f"[TOOL]  Screenshot captured. Sending to Gemini for analysis...")
+    model_name = os.environ.get("LLM_MODEL", "google/gemini-2.5-pro")
+    print(f"[TOOL]  Screenshot captured. Sending to {model_name} for analysis...")
     
     try:
         llm_client = get_llm_client()
         response = await llm_client.chat.completions.create(
-            model=os.environ.get("LLM_MODEL", "google/gemini-2.5-pro"),
+            model=model_name,
             messages=[
                 {
                     "role": "user",

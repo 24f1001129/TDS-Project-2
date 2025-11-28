@@ -1,7 +1,5 @@
 import os
 import asyncio
-import os
-import asyncio
 from json import JSONDecodeError
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
@@ -17,7 +15,8 @@ TASK_TIMEOUT = 180.0  # 3 minutes as per requirements
 
 @router.get("/")
 def read_root():
-    return {"message": "Gemini 2.5 Pro Generalist Agent is live."}
+    model_name = os.environ.get("LLM_MODEL", "google/gemini-2.5-pro")
+    return {"message": f"{model_name} Generalist Agent is live."}
 
 
 @router.get("/health")
